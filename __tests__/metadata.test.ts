@@ -2,7 +2,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { MOBILE, bundledChromeVersion, deviceFor, desktopDevice, desktopUserAgent } from '../src/devices';
+import { MOBILE, bundledChromeVersion, deviceFor, desktopDevice } from '../src/devices';
 import {
     PATCHED_FILES,
     PATCH_MARKER,
@@ -32,26 +32,22 @@ describe('devices', () => {
     });
 
     test.each([
-        ['darwin', 'Macintosh; Intel Mac OS X 10_15_7', 'macOS'],
-        ['win32', 'Windows NT 10.0; Win64; x64', 'Windows'],
-        ['linux', 'X11; Linux x86_64', 'Linux'],
-    ])('desktop on %s: user agent and client-hint platform match the host OS', (platform, uaToken, chPlatform) => {
-        expect(desktopUserAgent('131.0.6778.85', platform)).toBe(
+        ['darwin', 'x64', 'Macintosh; Intel Mac OS X 10_15_7', 'macOS', 'x86'],
+        ['darwin', 'arm64', 'Macintosh; Intel Mac OS X 10_15_7', 'macOS', 'arm'],
+        ['win32', 'x64', 'Windows NT 10.0; Win64; x64', 'Windows', 'x86'],
+        ['linux', 'x64', 'X11; Linux x86_64', 'Linux', 'x86'],
+    ])('desktop on %s/%s: user agent and client hints match the host', (platform, arch, uaToken, chPlatform, chArch) => {
+        const device = desktopDevice('131.0.6778.85', platform, arch);
+        expect(device.userAgent).toBe(
             `Mozilla/5.0 (${uaToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`,
         );
-        const device = desktopDevice('131.0.6778.85', platform, 'x64');
-        expect(device.userAgent).toContain(uaToken);
-        expect(device.userAgentMetadata).toMatchObject({ platform: chPlatform, architecture: 'x86', bitness: '64' });
+        expect(device.userAgentMetadata).toMatchObject({ platform: chPlatform, architecture: chArch, bitness: '64' });
         expect(device.userAgentMetadata!.brands).toContainEqual({ brand: 'Google Chrome', version: '131' });
     });
 
     test('desktop on the current host uses the host OS', () => {
         const expected = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[process.platform as string];
         expect(deviceFor('desktop').userAgentMetadata!.platform).toBe(expected);
-    });
-
-    test('arm64 hosts report the arm architecture', () => {
-        expect(desktopDevice('131.0.6778.85', 'darwin', 'arm64').userAgentMetadata!.architecture).toBe('arm');
     });
 
     test('desktop refuses hosts without a preset', () => {
@@ -142,6 +138,13 @@ describe('readToolVersions', () => {
     test('reports collector, puppeteer, Chromium, blocklist and git versions', () => {
         const v = readToolVersions();
         expect(v.collector).toBe('3.11.0');
+        const patchFile = '@themarkup+blacklight-collector+3.11.0.patch';
+        const patchBytes = fs.readFileSync(path.join(__dirname, '..', 'patches', patchFile));
+        expect(v.collectorPatch).toEqual({
+            marker: PATCH_MARKER,
+            file: patchFile,
+            sha256: require('crypto').createHash('sha256').update(patchBytes).digest('hex'),
+        });
         expect(v.puppeteer).toMatch(/^\d+\.\d+\.\d+/);
         expect(v.bundledChromium).toBe(bundledChromeVersion);
         expect(v.bundledChromium).toMatch(/^\d+\.\d+\.\d+\.\d+$/);

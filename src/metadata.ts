@@ -1,4 +1,5 @@
 import { execFileSync } from "child_process";
+import { createHash } from "crypto";
 import * as fs from "fs";
 import { join } from "path";
 import { bundledChromeVersion, collectorDir, collectorVersion, NamedDevice, puppeteerVersion, repoDir } from "./devices";
@@ -47,6 +48,14 @@ export function unpatchedCollectorFiles(dir: string = collectorDir): string[] {
   });
 }
 
+/** Which collector patch revision this checkout applies: its marker and the patch file's SHA-256. */
+function collectorPatch() {
+  const patchDir = join(repoDir, "patches");
+  const file = fs.readdirSync(patchDir).find(f => f.startsWith("@themarkup+blacklight-collector+"));
+  const sha256 = file ? createHash("sha256").update(fs.readFileSync(join(patchDir, file))).digest("hex") : null;
+  return { marker: PATCH_MARKER, file: file ?? null, sha256 };
+}
+
 function git(dir: string, args: string[]): string | null {
   try {
     return execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -75,6 +84,7 @@ export function gitState(dir: string = repoDir): GitState {
 
 export interface ToolVersions {
   collector: string;
+  collectorPatch: ReturnType<typeof collectorPatch>;
   puppeteer: string;
   /**
    * The Chromium build puppeteer downloads. The browser a scan actually used
@@ -94,6 +104,7 @@ export function readToolVersions(): ToolVersions {
   const blocklist = (file: string) => readBlocklistHeader(join(collectorDir, "data", "blocklists", file));
   return {
     collector: collectorVersion,
+    collectorPatch: collectorPatch(),
     puppeteer: puppeteerVersion,
     bundledChromium: bundledChromeVersion,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,

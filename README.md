@@ -35,7 +35,7 @@ Examples:
 
 ### Options in detail
 
-- `--device mobile` emulates an iPhone 13 Mini, the collector's default. `--device desktop` uses a 1440×900 viewport without touch and a standard desktop Chrome user agent for the bundled Chromium's major version and the **host OS** (macOS, Windows or Linux), plus matching client-hint metadata. That way the user agent, `navigator.platform` (which emulation can't change) and the `Sec-CH-UA-Platform` header agree. Desktop results therefore depend on the OS the scan runs on. The device used is recorded in each scan's `inspection.json` (`config.emulateDevice`), and the device and user agent are recorded in `run.json`.
+- `--device mobile` emulates an iPhone 13 Mini, the collector's default. `--device desktop` uses a 1440×900 viewport without touch and a standard desktop Chrome user agent for the bundled Chromium's major version and the **host OS** (macOS, Windows or Linux), plus matching client-hint metadata. That way the user agent, `navigator.platform` (which this tool doesn't override) and the `Sec-CH-UA-Platform` header agree. Desktop results therefore depend on the OS the scan runs on. The device used is recorded in each scan's `inspection.json` (`config.emulateDevice`), and the device and user agent are recorded in `run.json`.
 - `--runs n` scans the full list `n` times in a row. Each run gets its own folder (`r1/`, `r2/`, …), so repeated runs can be compared.
 - `--out dir` sets the base folder. Runs go in `dir/r1/`, `dir/r2/`, and so on. The tool won't write into a run folder that already exists.
 - `--location text` is passed to the collector's `location` option, so it appears in each `inspection.json`, and is recorded in `run.json`. It's free text, e.g. where the scan was run from.
@@ -108,7 +108,7 @@ outputs/20260102-0930-mobile/     # or the --out folder
 - how many URLs were scanned and how many failed
 - `patched: true`: the collector patch was verified at startup
 - under `versions`:
-  - the collector and puppeteer versions
+  - the collector and puppeteer versions, and `collectorPatch`: the patch marker, file name and SHA-256
   - `bundledChromium`, the Chromium build puppeteer downloads. The browser a scan actually used is in each `inspection.json` as `browser.version`. They differ if `PUPPETEER_EXECUTABLE_PATH` is set; the tool warns when it is, and records it as `executablePath`.
   - the EasyList and EasyPrivacy versions from their list headers
   - this repo's git commit, and `dirty: true` if there are local changes or untracked files that aren't gitignored

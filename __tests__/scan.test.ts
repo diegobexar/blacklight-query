@@ -29,8 +29,12 @@ describe('collectWithRetry', () => {
     afterEach(() => {
         fs.rmSync(outDir, { recursive: true, force: true });
         jest.restoreAllMocks();
+        jest.useRealTimers();
     });
-    beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => {}));
+    beforeEach(() => {
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+        jest.useFakeTimers();
+    });
 
     test('succeeds on the first attempt without retrying', async () => {
         const collect = jest.fn().mockResolvedValue({ status: 'success' });
@@ -39,41 +43,31 @@ describe('collectWithRetry', () => {
     });
 
     test('waits RETRY_DELAY_MS, then retries once after a thrown error', async () => {
-        jest.useFakeTimers();
-        try {
-            const collect = jest.fn()
-                .mockRejectedValueOnce(new Error('Navigation timeout of 35000 ms exceeded'))
-                .mockResolvedValueOnce({ status: 'success' });
-            const result = collectWithRetry('https://example.com', { outDir }, collect);
-            await jest.advanceTimersByTimeAsync(RETRY_DELAY_MS - 1);
-            expect(collect).toHaveBeenCalledTimes(1);
-            await jest.advanceTimersByTimeAsync(1);
-            expect(await result).toBeNull();
-            expect(collect).toHaveBeenCalledTimes(2);
-            expect(fs.existsSync(outDir)).toBe(true);
-        } finally {
-            jest.useRealTimers();
-        }
+        const collect = jest.fn()
+            .mockRejectedValueOnce(new Error('Navigation timeout of 35000 ms exceeded'))
+            .mockResolvedValueOnce({ status: 'success' });
+        const result = collectWithRetry('https://example.com', { outDir }, collect);
+        await jest.advanceTimersByTimeAsync(RETRY_DELAY_MS - 1);
+        expect(collect).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(1);
+        expect(await result).toBeNull();
+        expect(collect).toHaveBeenCalledTimes(2);
+        expect(fs.existsSync(outDir)).toBe(true);
     });
 
     test('treats a "failed" status as an error and records the last one', async () => {
-        jest.useFakeTimers();
-        try {
-            const collect = jest.fn()
-                .mockRejectedValueOnce(new Error('net::ERR_CONNECTION_REFUSED at https://example.org'))
-                .mockResolvedValueOnce({ status: 'failed', page_response: 'Chrome crashed' });
-            const result = collectWithRetry('https://example.org', { outDir }, collect);
-            await jest.advanceTimersByTimeAsync(RETRY_DELAY_MS);
-            expect(await result).toEqual({
-                url: 'https://example.org',
-                error: 'collector returned status "failed": Chrome crashed',
-                attempts: 2,
-            });
-            expect(collect).toHaveBeenCalledTimes(2);
-            expect(fs.existsSync(outDir)).toBe(false);
-        } finally {
-            jest.useRealTimers();
-        }
+        const collect = jest.fn()
+            .mockRejectedValueOnce(new Error('net::ERR_CONNECTION_REFUSED at https://example.org'))
+            .mockResolvedValueOnce({ status: 'failed', page_response: 'Chrome crashed' });
+        const result = collectWithRetry('https://example.org', { outDir }, collect);
+        await jest.advanceTimersByTimeAsync(RETRY_DELAY_MS);
+        expect(await result).toEqual({
+            url: 'https://example.org',
+            error: 'collector returned status "failed": Chrome crashed',
+            attempts: 2,
+        });
+        expect(collect).toHaveBeenCalledTimes(2);
+        expect(fs.existsSync(outDir)).toBe(false);
     });
 
     test('does not retry an unresolvable hostname', async () => {

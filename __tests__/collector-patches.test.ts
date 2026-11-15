@@ -108,27 +108,22 @@ describe('collect() against a local page', () => {
 </body></html>`;
 
     let server: http.Server;
+    let requests: http.IncomingMessage[];
     let outDir: string;
-    let lateRequestSeen = false;
     let inspection: any;
     const firstAttemptTimers: unknown[] = [];
     const clearedTimers = new Set<unknown>();
 
     beforeAll(async () => {
-        server = http.createServer((req, res) => {
-            if (req.url === '/late') lateRequestSeen = true;
-            res.writeHead(200, { 'content-type': 'text/html' });
-            res.end(req.url === '/' ? page : '');
-        });
-        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-        const { port } = server.address() as AddressInfo;
+        let url: string;
+        ({ server, requests, url } = await startServer(page));
         outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blq-collect-'));
 
         // spyOn calls through to the real timers.
         const setSpy = jest.spyOn(global, 'setTimeout');
         const clearSpy = jest.spyOn(global, 'clearTimeout');
         try {
-            await collect(`http://127.0.0.1:${port}/`, {
+            await collect(url, {
                 outDir,
                 numPages: 0,
                 headless: true,
@@ -160,20 +155,19 @@ describe('collect() against a local page', () => {
     });
 
     test('postLoadWaitMs keeps the page open after autoScroll', () => {
-        expect(lateRequestSeen).toBe(true);
+        expect(requests.some(r => r.url === '/late')).toBe(true);
         expect(inspection.config.postLoadWaitMs).toBe(WAIT_MS);
     });
 });
 
 describe('collect() device emulation', () => {
     test('a rejected emulation fails the scan', async () => {
-        const { server } = await startServer('<!doctype html><title>fixture</title>');
+        const { server, url } = await startServer('<!doctype html><title>fixture</title>');
         const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blq-emulate-'));
-        const { port } = server.address() as AddressInfo;
         try {
             const badDevice = { userAgent: 'test', viewport: { width: -1, height: 900 } };
             await expect(
-                collect(`http://127.0.0.1:${port}/`, { outDir, numPages: 0, saveScreenshots: false, emulateDevice: badDevice }),
+                collect(url, { outDir, numPages: 0, saveScreenshots: false, emulateDevice: badDevice }),
             ).rejects.toThrow();
         } finally {
             server.close();
