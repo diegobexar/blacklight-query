@@ -1,0 +1,117 @@
+diff --git a/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js b/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
+index b248aeb..4bd3b1c 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
++++ b/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
+@@ -126,7 +126,7 @@ const getCanvasFingerprinters = (canvasCalls) => {
+ };
+ exports.getCanvasFingerprinters = getCanvasFingerprinters;
+ const getCanvasFontFingerprinters = jsCalls => {
+-    const font_shorthand = /^\s*(?=(?:(?:[-a-z]+\s*){0,2}(italic|oblique))?)(?=(?:(?:[-a-z]+\s*){0,2}(small-caps))?)(?=(?:(?:[-a-z]+\s*){0,2}(bold(?:er)?|lighter|[1-9]00))?)(?:(?:normal|\1|\2|\3)\s*){0,3}((?:xx?-)?(?:small|large)|medium|smaller|larger|[.\d]+(?:\%|in|[cem]m|ex|p[ctx]))(?:\s*\/\s*(normal|[.\d]+(?:\%|in|[cem]m|ex|p[ctx])))?\s*([-_\{\}\(\)\&!\',\*\.\"\sa-zA-Z0-9]+?)\s*$/g;
++    const font_shorthand = /^\s*(?=(?:(?:[-a-z]+\s*){0,2}(italic|oblique))?)(?=(?:(?:[-a-z]+\s*){0,2}(small-caps))?)(?=(?:(?:[-a-z]+\s*){0,2}(bold(?:er)?|lighter|[1-9]00))?)(?:(?:normal|\1|\2|\3)\s*){0,3}((?:xx?-)?(?:small|large)|medium|smaller|larger|[.\d]+(?:\%|in|[cem]m|ex|p[ctx]))(?:\s*\/\s*(normal|[.\d]+(?:\%|in|[cem]m|ex|p[ctx])))?\s*([-_\{\}\(\)\&!\',\*\.\"\sa-zA-Z0-9]+?)\s*$/; // Patched: no /g, so .test() keeps no lastIndex between calls
+     const textMeasure = new Map();
+     const canvasFont = new Map();
+     for (const item of jsCalls) {
+diff --git a/node_modules/@themarkup/blacklight-collector/build/collector.d.ts b/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
+index e785cae..c0be648 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
++++ b/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
+@@ -15,6 +15,8 @@ declare const DEFAULT_OPTIONS: {
+     defaultTimeout: number;
+     numPages: number;
+     defaultWaitUntil: PuppeteerLifeCycleEvent;
++    /** Patched: extra wait in ms after each page's autoScroll. Default 0. */
++    postLoadWaitMs: number;
+     saveBrowserProfile: boolean;
+     saveScreenshots: boolean;
+     headers: {};
+diff --git a/node_modules/@themarkup/blacklight-collector/build/collector.js b/node_modules/@themarkup/blacklight-collector/build/collector.js
+index 785ba37..a2af5b2 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/collector.js
++++ b/node_modules/@themarkup/blacklight-collector/build/collector.js
+@@ -58,6 +58,7 @@ const DEFAULT_OPTIONS = {
+     defaultTimeout: 35000,
+     numPages: 3,
+     defaultWaitUntil: 'networkidle2',
++    postLoadWaitMs: 0,
+     saveBrowserProfile: false,
+     saveScreenshots: true,
+     headers: {},
+@@ -78,6 +79,8 @@ const DEFAULT_OPTIONS = {
+     extraChromiumArgs: ['--disable-features=TrackingProtection3pcd'],
+     extraPuppeteerOptions: {}
+ };
++// Patched: optional extra wait after each page's autoScroll (postLoadWaitMs).
++const postLoadWait = (ms) => ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+ const collect = async (inUrl, args) => {
+     args = Object.assign(Object.assign({}, DEFAULT_OPTIONS), args);
+     (0, utils_1.clearDir)(args.outDir);
+@@ -102,6 +105,7 @@ const collect = async (inUrl, args) => {
+             numPages: args.numPages,
+             defaultTimeout: args.defaultTimeout,
+             defaultWaitUntil: args.defaultWaitUntil,
++            postLoadWaitMs: args.postLoadWaitMs,
+             headless: args.headless,
+             headers: args.headers,
+             extraChromiumArgs: args.extraChromiumArgs,
+@@ -204,17 +208,22 @@ const collect = async (inUrl, args) => {
+         }
+         // Function to navigate to a page with a timeout guard
+         const navigateWithTimeout = async (page, url, timeout, waitUntil) => {
++            // Patched: clear the 10 s guard once the race settles, so it can't
++            // fire later (during the next page or scan) or hold the process open.
++            let firstAttemptTimer;
+             try {
+                 page_response = await Promise.race([
+                     page.goto(url, {
+                         timeout: timeout,
+                         waitUntil: waitUntil
+                     }),
+-                    new Promise((_, reject) => setTimeout(() => {
+-                        console.log('First navigation attempt timeout');
+-                        reject(new Error('First navigation attempt timeout'));
+-                    }, 10000))
+-                ]);
++                    new Promise((_, reject) => {
++                        firstAttemptTimer = setTimeout(() => {
++                            console.log('First navigation attempt timeout');
++                            reject(new Error('First navigation attempt timeout'));
++                        }, 10000);
++                    })
++                ]).finally(() => clearTimeout(firstAttemptTimer));
+             }
+             catch (error) {
+                 console.log('First attempt failed, trying with domcontentloaded');
+@@ -262,6 +271,7 @@ const collect = async (inUrl, args) => {
+         }
+         await (0, interaction_utils_1.fillForms)(page);
+         await (0, interaction_utils_1.autoScroll)(page);
++        await postLoadWait(args.postLoadWaitMs);
+         let subDomainLinks = [];
+         if ((0, tldts_1.getSubdomain)(output.uri_dest) !== 'www') {
+             subDomainLinks = outputLinks.first_party.filter(f => {
+@@ -291,6 +301,7 @@ const collect = async (inUrl, args) => {
+             await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for 1 second
+             duplicatedLinks = duplicatedLinks.concat(await (0, get_links_1.getLinks)(page));
+             await (0, interaction_utils_1.autoScroll)(page);
++            await postLoadWait(args.postLoadWaitMs);
+             pageIndex++;
+         }
+         await (0, cookies_1.captureBrowserCookies)(page, args.outDir);
+diff --git a/node_modules/@themarkup/blacklight-collector/build/parser.js b/node_modules/@themarkup/blacklight-collector/build/parser.js
+index 5457a02..2992195 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/parser.js
++++ b/node_modules/@themarkup/blacklight-collector/build/parser.js
+@@ -212,9 +212,10 @@ const reportGoogleAnalyticsEvents = (eventData) => {
+                 || event.url.includes('AW-'));
+     });
+     return googleAnalyticsEvents.map((event) => {
+-        const url = event.url;
+-        delete event.url;
+-        return Object.assign(Object.assign({}, event), { raw: url });
++        // Patched: copy instead of `delete event.url`. The event objects are
++        // shared with third_party_trackers, which then dropped these requests.
++        const { url, ...rest } = event;
++        return { ...rest, raw: url };
+     });
+ };
+ const reportFbPixelEvents = (eventData) => {
