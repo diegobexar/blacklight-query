@@ -1,0 +1,20 @@
+# Paradev workspace config: https://docs.paradev.com/setup-teardown-scripts
+# blacklight-query is a CLI: no dev server, no ports, nothing to stop on archive.
+
+[install]
+run = ["./.paradev/with-node.sh npm ci"]
+
+[setup]
+# Copy untracked inputs from the main checkout, without overwriting.
+run = ['for f in .env .env.local urls.txt; do if [ -f "$SUPERSET_ROOT_PATH/$f" ] && [ ! -e "$f" ]; then cp "$SUPERSET_ROOT_PATH/$f" "$f" && echo "Copied $f from the main checkout"; fi; done']
+
+[setup.cloud]
+# No main checkout to copy from in the cloud.
+run = []
+
+[terminals.scan]
+run = 'if [ -f urls.txt ]; then ./.paradev/with-node.sh ./blacklight-query urls.txt; else echo "No urls.txt here. Add one (one absolute URL per line) and press Run again."; fi'
+default = true
+
+[terminals.test]
+run = "./.paradev/with-node.sh npm test"
