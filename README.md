@@ -35,13 +35,15 @@ Examples:
 
 ### Options in detail
 
-- `--device mobile` emulates an iPhone 13 Mini, the collector's default. `--device desktop` uses a 1440×900 viewport without touch and a standard desktop Chrome user agent for the bundled Chromium's major version. The device used is recorded in each scan's `inspection.json` (`config.emulateDevice`) and in `run.json`.
+- `--device mobile` emulates an iPhone 13 Mini, the collector's default. `--device desktop` uses a 1440×900 viewport without touch and a standard desktop Chrome user agent for the bundled Chromium's major version and the **host OS** (macOS, Windows or Linux), plus matching client-hint metadata. That way the user agent, `navigator.platform` (which emulation can't change) and the `Sec-CH-UA-Platform` header agree. Desktop results therefore depend on the OS the scan runs on. The device used is recorded in each scan's `inspection.json` (`config.emulateDevice`), and the device and user agent are recorded in `run.json`.
 - `--runs n` scans the full list `n` times in a row. Each run gets its own folder (`r1/`, `r2/`, …), so repeated runs can be compared.
 - `--out dir` sets the base folder. Runs go in `dir/r1/`, `dir/r2/`, and so on. The tool won't write into a run folder that already exists.
 - `--location text` is passed to the collector's `location` option, so it appears in each `inspection.json`, and is recorded in `run.json`. It's free text, e.g. where the scan was run from.
 - `--wait ms` waits this long after the collector has loaded and scrolled each page and before it collects results, for pages that load trackers late. The default of `0` matches a standard Blacklight scan.
 
-Each URL is retried once if the scan fails. URLs that fail twice are listed in the run's `failures.json`.
+If a scan fails, the URL is retried once after 5 seconds. An unresolvable hostname (`net::ERR_NAME_NOT_RESOLVED`) isn't retried. URLs that still fail are listed in the run's `failures.json`, with the number of attempts.
+
+Ctrl-C (SIGINT) or SIGTERM stops the scan. The current run's `run.json` is marked `interrupted: true`, with the signal and the URL being scanned, and the tool exits with 130 or 143.
 
 ## Inputs
 
@@ -59,7 +61,7 @@ https://www.calmatters.org
 
 ### You can use pipes
 
-You can also pipe your list of URLs. With no file argument, the list is read from stdin if it's piped; `-` reads stdin explicitly.
+You can also pipe your list of URLs. With no file argument, the list is read from stdin if it's piped; `-` reads stdin explicitly. The tool prints `reading URLs from stdin...` to stderr first, so a pipe that never closes is easy to spot.
 
 - `echo "https://themarkup.org/" | ./blacklight-query`
 - `./blacklight-query < urls.txt`
@@ -88,7 +90,7 @@ Read the [`blacklight-collector` README](https://github.com/the-markup/blackligh
 outputs/20260102-0930-mobile/     # or the --out folder
   r1/
     run.json                      # how this run was made (see below)
-    failures.json                 # URLs that failed both attempts: url, error, attempts
+    failures.json                 # URLs that failed: url, error, attempts
     example.com/                  # one folder per scanned URL, named for its hostname
       inspection.json
       requests.har
@@ -98,24 +100,38 @@ outputs/20260102-0930-mobile/     # or the --out folder
     ...
 ```
 
-`run.json` and `failures.json` are written when a run starts and updated as it goes, so an interrupted run keeps them; its `run.json` has `endedAt: null`. `run.json` records:
+`run.json` and `failures.json` are written when a run starts and updated as it goes. A run that was killed outright has `endedAt: null` in `run.json`; one stopped by Ctrl-C or SIGTERM has `interrupted: true` (see above). `run.json` records:
 
-- the device name and settings, and the run number
-- start and end times, the `--location` text and the `--wait` value
+- the device name and settings, the user agent, and the run number
+- start and end times, whether the run was interrupted, the `--location` text and the `--wait` value
 - the input file path (or `-` for stdin), its SHA-256, the URL count and any skipped lines
 - how many URLs were scanned and how many failed
-- the versions of the collector, puppeteer and Chromium; the EasyList and EasyPrivacy versions from their list headers; and this repo's git commit, with whether tracked files had local changes
+- `patched: true`: the collector patch was verified at startup
+- under `versions`:
+  - the collector and puppeteer versions
+  - `bundledChromium`, the Chromium build puppeteer downloads. The browser a scan actually used is in each `inspection.json` as `browser.version`. They differ if `PUPPETEER_EXECUTABLE_PATH` is set; the tool warns when it is, and records it as `executablePath`.
+  - the EasyList and EasyPrivacy versions from their list headers
+  - this repo's git commit, and `dirty: true` if there are local changes or untracked files that aren't gitignored
 
 ## Collector patches
 
-`patches/@themarkup+blacklight-collector+3.11.0.patch` is applied by [`patch-package`](https://github.com/ds300/patch-package) on every `npm install`. It changes the collector's built code in `node_modules`:
+`patches/@themarkup+blacklight-collector+3.11.0.patch` is applied by [`patch-package`](https://github.com/ds300/patch-package) (a regular dependency, so it also runs with `npm install --omit=dev`) on every `npm install`. It changes the collector's built code in `node_modules`:
 
 - **Google Analytics report no longer hides trackers.** The GA report deleted `url` from the shared event objects, so `stats.g.doubleclick.net` requests then disappeared from `third_party_trackers`. The patch copies the event instead.
 - **Canvas font check counts every font.** The font regex had the `/g` flag, so `.test()` kept `lastIndex` between calls and skipped every other font. That could keep a script under the 50-font threshold. The flag is removed.
+- **Canvas text-measure check counts and filters correctly.** Counting `measureText` calls gave `NaN` for every text after a script's first. The 50-call threshold tested `.size` on a plain object, so it never filtered anything. Now a script is kept only if it measured the same text at least 50 times, the published criterion (Englehardt & Narayanan, 2016).
+- **Device emulation is awaited.** `page.emulate` (and `setExtraHTTPHeaders`) weren't awaited, so a failed emulation was ignored and the scan silently used the headless defaults. Now the scan fails. A device's `userAgentMetadata`, when given, is applied with `page.setUserAgent`, so Chrome sends matching `Sec-CH-UA-*` headers. Without the metadata it sends none once the user agent is overridden.
 - **The 10 s navigation timer is cleared.** It used to keep running after navigation finished, then logged a false "timeout" during a later scan and held the process open.
 - **New `postLoadWaitMs` option** (default `0`): an extra wait after each page's auto-scroll. Used by `--wait`.
 
-The patch is for collector 3.11.0, so `package.json` pins that exact version. `postinstall` runs `patch-package --error-on-fail`, so `npm install` stops if the patch no longer applies, for example after a collector upgrade, and `npm test` fails if a fix is missing. To update the patch, edit the files in `node_modules/@themarkup/blacklight-collector/build/`, then run `npx patch-package @themarkup/blacklight-collector`. The tests in `__tests__/collector-patches.test.ts` check each fix.
+The patch is for collector 3.11.0, so `package.json` pins that exact version. `postinstall` runs `patch-package --error-on-fail`, so `npm install` stops if the patch no longer applies, for example after a collector upgrade, and `npm test` fails if a fix is missing. Each patched file also gets a `// blacklight-query-patch:N` marker line. At startup the tool checks the marker and refuses to scan if it's missing or out of date (for example, a pull that changed the patch without an `npm install`).
+
+To update the patch:
+1. Edit the files in `node_modules/@themarkup/blacklight-collector/build/`.
+2. Bump the marker in each file and `PATCH_MARKER` in `src/metadata.ts`.
+3. Run `npx patch-package @themarkup/blacklight-collector`.
+
+The tests in `__tests__/collector-patches.test.ts` check each fix, and `__tests__/metadata.test.ts` checks the marker.
 
 ## Notes
 
@@ -125,4 +141,4 @@ Be aware that the Collector is fairly resource-heavy, and may slow down your com
 
 `npm test`
 
-The collector-patch tests launch the bundled headless Chromium against a local test page.
+The collector-patch tests launch the bundled headless Chromium against a local test page. `__tests__/cli.test.ts` runs the launcher itself.

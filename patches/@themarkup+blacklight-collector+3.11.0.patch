@@ -1,8 +1,14 @@
 diff --git a/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js b/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
-index b248aeb..4bd3b1c 100644
+index b248aeb..8c38dc3 100644
 --- a/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
 +++ b/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
-@@ -126,7 +126,7 @@ const getCanvasFingerprinters = (canvasCalls) => {
+@@ -1,4 +1,5 @@
+ "use strict";
++// blacklight-query-patch:1 (checked at startup by blacklight-query; see its README)
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.getCanvasFontFingerprinters = exports.getCanvasFingerprinters = exports.sortCanvasCalls = void 0;
+ const utils_1 = require("./helpers/utils");
+@@ -126,7 +127,7 @@ const getCanvasFingerprinters = (canvasCalls) => {
  };
  exports.getCanvasFingerprinters = getCanvasFingerprinters;
  const getCanvasFontFingerprinters = jsCalls => {
@@ -11,6 +17,37 @@ index b248aeb..4bd3b1c 100644
      const textMeasure = new Map();
      const canvasFont = new Map();
      for (const item of jsCalls) {
+@@ -135,13 +136,10 @@ const getCanvasFontFingerprinters = jsCalls => {
+         if (CANVAS_FONT.includes(symbol)) {
+             if (symbol.indexOf('measureText') > -1) {
+                 const textToMeasure = item.data.arguments[0];
+-                if (textMeasure.has(script_url)) {
+-                    textMeasure.get(script_url)[textToMeasure] += 1;
+-                }
+-                else {
+-                    const val = { [textToMeasure]: 1 };
+-                    textMeasure.set(script_url, val);
+-                }
++                // Patched: `+= 1` on a text not seen before gave NaN.
++                const counts = textMeasure.get(script_url) || {};
++                counts[textToMeasure] = (counts[textToMeasure] || 0) + 1;
++                textMeasure.set(script_url, counts);
+             }
+             if (symbol.indexOf('font') > -1) {
+                 if (font_shorthand.test(value)) {
+@@ -155,8 +153,11 @@ const getCanvasFontFingerprinters = jsCalls => {
+             map.delete(key);
+         }
+     });
++    // Patched: `value` is a plain object, so `.size` was undefined and no
++    // script was ever filtered out. Keep a script only if it measured the same
++    // text at least MIN_TEXT_MEASURE_COUNT times (Englehardt & Narayanan 2016).
+     textMeasure.forEach((value, key, map) => {
+-        if (value.size < MIN_TEXT_MEASURE_COUNT) {
++        if (Math.max(...Object.values(value)) < MIN_TEXT_MEASURE_COUNT) {
+             map.delete(key);
+         }
+     });
 diff --git a/node_modules/@themarkup/blacklight-collector/build/collector.d.ts b/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
 index e785cae..c0be648 100644
 --- a/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
@@ -25,10 +62,16 @@ index e785cae..c0be648 100644
      saveScreenshots: boolean;
      headers: {};
 diff --git a/node_modules/@themarkup/blacklight-collector/build/collector.js b/node_modules/@themarkup/blacklight-collector/build/collector.js
-index 785ba37..a2af5b2 100644
+index 785ba37..34fbf6c 100644
 --- a/node_modules/@themarkup/blacklight-collector/build/collector.js
 +++ b/node_modules/@themarkup/blacklight-collector/build/collector.js
-@@ -58,6 +58,7 @@ const DEFAULT_OPTIONS = {
+@@ -1,4 +1,5 @@
+ "use strict";
++// blacklight-query-patch:1 (checked at startup by blacklight-query; see its README)
+ var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+     if (k2 === undefined) k2 = k;
+     var desc = Object.getOwnPropertyDescriptor(m, k);
+@@ -58,6 +59,7 @@ const DEFAULT_OPTIONS = {
      defaultTimeout: 35000,
      numPages: 3,
      defaultWaitUntil: 'networkidle2',
@@ -36,7 +79,7 @@ index 785ba37..a2af5b2 100644
      saveBrowserProfile: false,
      saveScreenshots: true,
      headers: {},
-@@ -78,6 +79,8 @@ const DEFAULT_OPTIONS = {
+@@ -78,6 +80,8 @@ const DEFAULT_OPTIONS = {
      extraChromiumArgs: ['--disable-features=TrackingProtection3pcd'],
      extraPuppeteerOptions: {}
  };
@@ -45,7 +88,7 @@ index 785ba37..a2af5b2 100644
  const collect = async (inUrl, args) => {
      args = Object.assign(Object.assign({}, DEFAULT_OPTIONS), args);
      (0, utils_1.clearDir)(args.outDir);
-@@ -102,6 +105,7 @@ const collect = async (inUrl, args) => {
+@@ -102,6 +106,7 @@ const collect = async (inUrl, args) => {
              numPages: args.numPages,
              defaultTimeout: args.defaultTimeout,
              defaultWaitUntil: args.defaultWaitUntil,
@@ -53,7 +96,26 @@ index 785ba37..a2af5b2 100644
              headless: args.headless,
              headers: args.headers,
              extraChromiumArgs: args.extraChromiumArgs,
-@@ -204,17 +208,22 @@ const collect = async (inUrl, args) => {
+@@ -167,9 +172,16 @@ const collect = async (inUrl, args) => {
+                 version: os_1.default.release()
+             }
+         };
+-        page.emulate(args.emulateDevice);
++        // Patched: await these, so a rejected call fails the scan instead of
++        // silently scanning with the headless defaults.
++        await page.emulate(args.emulateDevice);
++        // Patched: page.emulate can't set client-hint metadata. Without it,
++        // Chrome sends no Sec-CH-UA-* headers once the user agent is overridden.
++        if (args.emulateDevice.userAgentMetadata) {
++            await page.setUserAgent(args.emulateDevice.userAgent, args.emulateDevice.userAgentMetadata);
++        }
+         if (Object.keys(args.headers).length > 0) {
+-            page.setExtraHTTPHeaders(args.headers);
++            await page.setExtraHTTPHeaders(args.headers);
+         }
+         // record all requested hosts
+         page.on('request', request => {
+@@ -204,17 +216,22 @@ const collect = async (inUrl, args) => {
          }
          // Function to navigate to a page with a timeout guard
          const navigateWithTimeout = async (page, url, timeout, waitUntil) => {
@@ -81,7 +143,7 @@ index 785ba37..a2af5b2 100644
              }
              catch (error) {
                  console.log('First attempt failed, trying with domcontentloaded');
-@@ -262,6 +271,7 @@ const collect = async (inUrl, args) => {
+@@ -262,6 +279,7 @@ const collect = async (inUrl, args) => {
          }
          await (0, interaction_utils_1.fillForms)(page);
          await (0, interaction_utils_1.autoScroll)(page);
@@ -89,7 +151,7 @@ index 785ba37..a2af5b2 100644
          let subDomainLinks = [];
          if ((0, tldts_1.getSubdomain)(output.uri_dest) !== 'www') {
              subDomainLinks = outputLinks.first_party.filter(f => {
-@@ -291,6 +301,7 @@ const collect = async (inUrl, args) => {
+@@ -291,6 +309,7 @@ const collect = async (inUrl, args) => {
              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for 1 second
              duplicatedLinks = duplicatedLinks.concat(await (0, get_links_1.getLinks)(page));
              await (0, interaction_utils_1.autoScroll)(page);
@@ -98,10 +160,16 @@ index 785ba37..a2af5b2 100644
          }
          await (0, cookies_1.captureBrowserCookies)(page, args.outDir);
 diff --git a/node_modules/@themarkup/blacklight-collector/build/parser.js b/node_modules/@themarkup/blacklight-collector/build/parser.js
-index 5457a02..2992195 100644
+index 5457a02..42087ee 100644
 --- a/node_modules/@themarkup/blacklight-collector/build/parser.js
 +++ b/node_modules/@themarkup/blacklight-collector/build/parser.js
-@@ -212,9 +212,10 @@ const reportGoogleAnalyticsEvents = (eventData) => {
+@@ -1,4 +1,5 @@
+ "use strict";
++// blacklight-query-patch:1 (checked at startup by blacklight-query; see its README)
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.reportCookieEvents = exports.reportCanvasFontFingerprinters = exports.reportCanvasFingerprinters = exports.generateReport = void 0;
+ const tldts_1 = require("tldts");
+@@ -212,9 +213,10 @@ const reportGoogleAnalyticsEvents = (eventData) => {
                  || event.url.includes('AW-'));
      });
      return googleAnalyticsEvents.map((event) => {

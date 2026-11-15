@@ -10,6 +10,20 @@ import * as path from 'path';
 const { generateReport } = require('@themarkup/blacklight-collector/build/parser');
 const { getCanvasFontFingerprinters } = require('@themarkup/blacklight-collector/build/canvas-fingerprinting');
 const { collect } = require('@themarkup/blacklight-collector');
+import { desktopDevice, bundledChromeVersion } from '../src/devices';
+
+/** Serves `page` at / and records every request. */
+async function startServer(page: string) {
+    const requests: http.IncomingMessage[] = [];
+    const server = http.createServer((req, res) => {
+        requests.push(req);
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(req.url === '/' ? page : '');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    return { server, requests, url: `http://127.0.0.1:${port}/` };
+}
 
 describe('google_analytics_events report', () => {
     const trackingRequest = (url: string) => ({
@@ -45,6 +59,31 @@ describe('canvas_font_fingerprinters', () => {
         const result = getCanvasFontFingerprinters(calls);
 
         expect(result.canvas_font[script]).toHaveLength(60);
+    });
+
+    const measureCalls = (script: string, text: string, n: number) =>
+        Array.from({ length: n }, () => ({
+            data: { symbol: 'CanvasRenderingContext2D.measureText', arguments: [text], operation: 'call' },
+            stack: [{ fileName: script }],
+        }));
+
+    test('counts measureText calls per text, without NaN for later texts', () => {
+        const script = 'https://fp.example.org/fp.js';
+        const calls = [...measureCalls(script, 'mmmmmmmmmmlli', 60), ...measureCalls(script, 'abc', 3)];
+
+        const result = getCanvasFontFingerprinters(calls);
+
+        expect(result.text_measure[script]).toEqual({ mmmmmmmmmmlli: 60, abc: 3 });
+    });
+
+    test('keeps only scripts that measured one text at least 50 times', () => {
+        const fingerprinter = 'https://fp.example.org/fp.js';
+        const layout = 'https://cdn.example.com/layout.js';
+        const calls = [...measureCalls(fingerprinter, 'mmmmmmmmmmlli', 50), ...measureCalls(layout, 'Hello', 49)];
+
+        const result = getCanvasFontFingerprinters(calls);
+
+        expect(Object.keys(result.text_measure)).toEqual([fingerprinter]);
     });
 });
 
@@ -115,4 +154,48 @@ describe('collect() against a local page', () => {
         expect(lateRequestSeen).toBe(true);
         expect(inspection.config.postLoadWaitMs).toBe(WAIT_MS);
     });
+});
+
+describe('collect() device emulation', () => {
+    test('a rejected emulation fails the scan', async () => {
+        const { server } = await startServer('<!doctype html><title>fixture</title>');
+        const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blq-emulate-'));
+        const { port } = server.address() as AddressInfo;
+        try {
+            const badDevice = { userAgent: 'test', viewport: { width: -1, height: 900 } };
+            await expect(
+                collect(`http://127.0.0.1:${port}/`, { outDir, numPages: 0, saveScreenshots: false, emulateDevice: badDevice }),
+            ).rejects.toThrow();
+        } finally {
+            server.close();
+            fs.rmSync(outDir, { recursive: true, force: true });
+        }
+    }, 60000);
+
+    test('desktop: user agent, navigator.platform and Sec-CH-UA-Platform agree', async () => {
+        const report = `<!doctype html><title>fixture</title><script>
+  fetch('/report?' + new URLSearchParams({ platform: navigator.platform, ch: navigator.userAgentData?.platform ?? '' }));
+</script>`;
+        const { server, requests, url } = await startServer(report);
+        const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blq-desktop-'));
+        const device = desktopDevice(bundledChromeVersion);
+        try {
+            await collect(url, { outDir, numPages: 0, saveScreenshots: false, emulateDevice: device });
+        } finally {
+            server.close();
+            fs.rmSync(outDir, { recursive: true, force: true });
+        }
+
+        const first = requests.find(r => r.url === '/')!;
+        expect(first.headers['user-agent']).toBe(device.userAgent);
+        const chPlatform = device.userAgentMetadata!.platform;
+        expect(first.headers['sec-ch-ua-platform']).toBe(`"${chPlatform}"`);
+
+        const reported = new URL(requests.find(r => r.url!.startsWith('/report'))!.url!, url).searchParams;
+        expect(reported.get('ch')).toBe(chPlatform);
+        // navigator.platform can't be emulated; the user agent has to follow it.
+        const uaTokenFor: [RegExp, string][] = [[/^Mac/, 'Macintosh'], [/^Win/, 'Windows'], [/^Linux/, 'Linux']];
+        const token = uaTokenFor.find(([re]) => re.test(reported.get('platform')!))![1];
+        expect(device.userAgent).toContain(token);
+    }, 60000);
 });

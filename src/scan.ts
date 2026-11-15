@@ -27,12 +27,17 @@ export function urlFolderName(url: string, used: Set<string>): string {
 }
 
 const MAX_ATTEMPTS = 2;
+/** Pause before the retry, so a brief network or server hiccup can clear. */
+export const RETRY_DELAY_MS = 5000;
+/** Errors a second attempt won't change. */
+const NOT_RETRYABLE = /net::ERR_NAME_NOT_RESOLVED/;
 
 /**
- * Runs `collect` and retries once on error. The
- * collector reports some failures by returning `status: "failed"` instead of
- * throwing; those count as errors too. On final failure the URL's partial
- * output folder is removed and a Failure is returned.
+ * Runs `collect`, and retries once after RETRY_DELAY_MS unless the error is
+ * one that won't change (an unresolvable hostname). The collector reports
+ * some failures by returning `status: "failed"` instead of throwing; those
+ * count as errors too. On final failure the URL's partial output folder is
+ * removed and a Failure is returned.
  */
 export async function collectWithRetry<Config extends { outDir: string }>(
   url: string,
@@ -40,7 +45,8 @@ export async function collectWithRetry<Config extends { outDir: string }>(
   collect: (url: string, config: Config) => Promise<{ status?: string; page_response?: unknown }>,
 ): Promise<Failure | null> {
   let error = "";
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  let attempt = 1;
+  for (; ; attempt++) {
     try {
       const result = await collect(url, config);
       if (result?.status === "success") return null;
@@ -48,8 +54,11 @@ export async function collectWithRetry<Config extends { outDir: string }>(
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
-    console.log(`${url} failed (attempt ${attempt} of ${MAX_ATTEMPTS}): ${error}`);
+    const retryable = !NOT_RETRYABLE.test(error);
+    console.log(`${url} failed (attempt ${attempt} of ${MAX_ATTEMPTS}): ${error}${retryable ? "" : " (not retrying)"}`);
+    if (attempt >= MAX_ATTEMPTS || !retryable) break;
+    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
   }
   fs.rmSync(config.outDir, { recursive: true, force: true });
-  return { url, error, attempts: MAX_ATTEMPTS };
+  return { url, error, attempts: attempt };
 }
