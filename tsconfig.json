@@ -7,6 +7,9 @@
       }
     },
     "compilerOptions": {
-      "module": "nodenext"
+      "module": "nodenext",
+      // Explicit, so ts-node (which overrides module) doesn't fall back to ES5,
+      // where `instanceof` fails for Error subclasses.
+      "target": "es2022"
     }
   }

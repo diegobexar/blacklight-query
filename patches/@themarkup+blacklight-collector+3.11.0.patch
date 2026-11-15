@@ -1,0 +1,185 @@
+diff --git a/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js b/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
+index b248aeb..474eca0 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
++++ b/node_modules/@themarkup/blacklight-collector/build/canvas-fingerprinting.js
+@@ -1,4 +1,5 @@
+ "use strict";
++// blacklight-query-patch:1 (checked at startup by blacklight-query; see its README)
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.getCanvasFontFingerprinters = exports.getCanvasFingerprinters = exports.sortCanvasCalls = void 0;
+ const utils_1 = require("./helpers/utils");
+@@ -126,7 +127,7 @@ const getCanvasFingerprinters = (canvasCalls) => {
+ };
+ exports.getCanvasFingerprinters = getCanvasFingerprinters;
+ const getCanvasFontFingerprinters = jsCalls => {
+-    const font_shorthand = /^\s*(?=(?:(?:[-a-z]+\s*){0,2}(italic|oblique))?)(?=(?:(?:[-a-z]+\s*){0,2}(small-caps))?)(?=(?:(?:[-a-z]+\s*){0,2}(bold(?:er)?|lighter|[1-9]00))?)(?:(?:normal|\1|\2|\3)\s*){0,3}((?:xx?-)?(?:small|large)|medium|smaller|larger|[.\d]+(?:\%|in|[cem]m|ex|p[ctx]))(?:\s*\/\s*(normal|[.\d]+(?:\%|in|[cem]m|ex|p[ctx])))?\s*([-_\{\}\(\)\&!\',\*\.\"\sa-zA-Z0-9]+?)\s*$/g;
++    const font_shorthand = /^\s*(?=(?:(?:[-a-z]+\s*){0,2}(italic|oblique))?)(?=(?:(?:[-a-z]+\s*){0,2}(small-caps))?)(?=(?:(?:[-a-z]+\s*){0,2}(bold(?:er)?|lighter|[1-9]00))?)(?:(?:normal|\1|\2|\3)\s*){0,3}((?:xx?-)?(?:small|large)|medium|smaller|larger|[.\d]+(?:\%|in|[cem]m|ex|p[ctx]))(?:\s*\/\s*(normal|[.\d]+(?:\%|in|[cem]m|ex|p[ctx])))?\s*([-_\{\}\(\)\&!\',\*\.\"\sa-zA-Z0-9]+?)\s*$/; // Patched: no /g, so .test() keeps no lastIndex between calls
+     const textMeasure = new Map();
+     const canvasFont = new Map();
+     for (const item of jsCalls) {
+@@ -135,13 +136,10 @@ const getCanvasFontFingerprinters = jsCalls => {
+         if (CANVAS_FONT.includes(symbol)) {
+             if (symbol.indexOf('measureText') > -1) {
+                 const textToMeasure = item.data.arguments[0];
+-                if (textMeasure.has(script_url)) {
+-                    textMeasure.get(script_url)[textToMeasure] += 1;
+-                }
+-                else {
+-                    const val = { [textToMeasure]: 1 };
+-                    textMeasure.set(script_url, val);
+-                }
++                // Patched: `+= 1` on a text not seen before gave NaN.
++                const counts = textMeasure.get(script_url) || {};
++                counts[textToMeasure] = (counts[textToMeasure] || 0) + 1;
++                textMeasure.set(script_url, counts);
+             }
+             if (symbol.indexOf('font') > -1) {
+                 if (font_shorthand.test(value)) {
+@@ -155,8 +153,11 @@ const getCanvasFontFingerprinters = jsCalls => {
+             map.delete(key);
+         }
+     });
++    // Patched: `value` is a plain object, so `.size` was undefined and no
++    // script was ever filtered out. Keep a script only if it measured the same
++    // text at least MIN_TEXT_MEASURE_COUNT times (Englehardt & Narayanan 2016).
+     textMeasure.forEach((value, key, map) => {
+-        if (value.size < MIN_TEXT_MEASURE_COUNT) {
++        if (!Object.values(value).some(count => count >= MIN_TEXT_MEASURE_COUNT)) {
+             map.delete(key);
+         }
+     });
+diff --git a/node_modules/@themarkup/blacklight-collector/build/collector.d.ts b/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
+index e785cae..c0be648 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
++++ b/node_modules/@themarkup/blacklight-collector/build/collector.d.ts
+@@ -15,6 +15,8 @@ declare const DEFAULT_OPTIONS: {
+     defaultTimeout: number;
+     numPages: number;
+     defaultWaitUntil: PuppeteerLifeCycleEvent;
++    /** Patched: extra wait in ms after each page's autoScroll. Default 0. */
++    postLoadWaitMs: number;
+     saveBrowserProfile: boolean;
+     saveScreenshots: boolean;
+     headers: {};
+diff --git a/node_modules/@themarkup/blacklight-collector/build/collector.js b/node_modules/@themarkup/blacklight-collector/build/collector.js
+index 785ba37..34fbf6c 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/collector.js
++++ b/node_modules/@themarkup/blacklight-collector/build/collector.js
+@@ -1,4 +1,5 @@
+ "use strict";
++// blacklight-query-patch:1 (checked at startup by blacklight-query; see its README)
+ var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+     if (k2 === undefined) k2 = k;
+     var desc = Object.getOwnPropertyDescriptor(m, k);
+@@ -58,6 +59,7 @@ const DEFAULT_OPTIONS = {
+     defaultTimeout: 35000,
+     numPages: 3,
+     defaultWaitUntil: 'networkidle2',
++    postLoadWaitMs: 0,
+     saveBrowserProfile: false,
+     saveScreenshots: true,
+     headers: {},
+@@ -78,6 +80,8 @@ const DEFAULT_OPTIONS = {
+     extraChromiumArgs: ['--disable-features=TrackingProtection3pcd'],
+     extraPuppeteerOptions: {}
+ };
++// Patched: optional extra wait after each page's autoScroll (postLoadWaitMs).
++const postLoadWait = (ms) => ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+ const collect = async (inUrl, args) => {
+     args = Object.assign(Object.assign({}, DEFAULT_OPTIONS), args);
+     (0, utils_1.clearDir)(args.outDir);
+@@ -102,6 +106,7 @@ const collect = async (inUrl, args) => {
+             numPages: args.numPages,
+             defaultTimeout: args.defaultTimeout,
+             defaultWaitUntil: args.defaultWaitUntil,
++            postLoadWaitMs: args.postLoadWaitMs,
+             headless: args.headless,
+             headers: args.headers,
+             extraChromiumArgs: args.extraChromiumArgs,
+@@ -167,9 +172,16 @@ const collect = async (inUrl, args) => {
+                 version: os_1.default.release()
+             }
+         };
+-        page.emulate(args.emulateDevice);
++        // Patched: await these, so a rejected call fails the scan instead of
++        // silently scanning with the headless defaults.
++        await page.emulate(args.emulateDevice);
++        // Patched: page.emulate can't set client-hint metadata. Without it,
++        // Chrome sends no Sec-CH-UA-* headers once the user agent is overridden.
++        if (args.emulateDevice.userAgentMetadata) {
++            await page.setUserAgent(args.emulateDevice.userAgent, args.emulateDevice.userAgentMetadata);
++        }
+         if (Object.keys(args.headers).length > 0) {
+-            page.setExtraHTTPHeaders(args.headers);
++            await page.setExtraHTTPHeaders(args.headers);
+         }
+         // record all requested hosts
+         page.on('request', request => {
+@@ -204,17 +216,22 @@ const collect = async (inUrl, args) => {
+         }
+         // Function to navigate to a page with a timeout guard
+         const navigateWithTimeout = async (page, url, timeout, waitUntil) => {
++            // Patched: clear the 10 s guard once the race settles, so it can't
++            // fire later (during the next page or scan) or hold the process open.
++            let firstAttemptTimer;
+             try {
+                 page_response = await Promise.race([
+                     page.goto(url, {
+                         timeout: timeout,
+                         waitUntil: waitUntil
+                     }),
+-                    new Promise((_, reject) => setTimeout(() => {
+-                        console.log('First navigation attempt timeout');
+-                        reject(new Error('First navigation attempt timeout'));
+-                    }, 10000))
+-                ]);
++                    new Promise((_, reject) => {
++                        firstAttemptTimer = setTimeout(() => {
++                            console.log('First navigation attempt timeout');
++                            reject(new Error('First navigation attempt timeout'));
++                        }, 10000);
++                    })
++                ]).finally(() => clearTimeout(firstAttemptTimer));
+             }
+             catch (error) {
+                 console.log('First attempt failed, trying with domcontentloaded');
+@@ -262,6 +279,7 @@ const collect = async (inUrl, args) => {
+         }
+         await (0, interaction_utils_1.fillForms)(page);
+         await (0, interaction_utils_1.autoScroll)(page);
++        await postLoadWait(args.postLoadWaitMs);
+         let subDomainLinks = [];
+         if ((0, tldts_1.getSubdomain)(output.uri_dest) !== 'www') {
+             subDomainLinks = outputLinks.first_party.filter(f => {
+@@ -291,6 +309,7 @@ const collect = async (inUrl, args) => {
+             await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for 1 second
+             duplicatedLinks = duplicatedLinks.concat(await (0, get_links_1.getLinks)(page));
+             await (0, interaction_utils_1.autoScroll)(page);
++            await postLoadWait(args.postLoadWaitMs);
+             pageIndex++;
+         }
+         await (0, cookies_1.captureBrowserCookies)(page, args.outDir);
+diff --git a/node_modules/@themarkup/blacklight-collector/build/parser.js b/node_modules/@themarkup/blacklight-collector/build/parser.js
+index 5457a02..42087ee 100644
+--- a/node_modules/@themarkup/blacklight-collector/build/parser.js
++++ b/node_modules/@themarkup/blacklight-collector/build/parser.js
+@@ -1,4 +1,5 @@
+ "use strict";
++// blacklight-query-patch:1 (checked at startup by blacklight-query; see its README)
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.reportCookieEvents = exports.reportCanvasFontFingerprinters = exports.reportCanvasFingerprinters = exports.generateReport = void 0;
+ const tldts_1 = require("tldts");
+@@ -212,9 +213,10 @@ const reportGoogleAnalyticsEvents = (eventData) => {
+                 || event.url.includes('AW-'));
+     });
+     return googleAnalyticsEvents.map((event) => {
+-        const url = event.url;
+-        delete event.url;
+-        return Object.assign(Object.assign({}, event), { raw: url });
++        // Patched: copy instead of `delete event.url`. The event objects are
++        // shared with third_party_trackers, which then dropped these requests.
++        const { url, ...rest } = event;
++        return { ...rest, raw: url };
+     });
+ };
+ const reportFbPixelEvents = (eventData) => {

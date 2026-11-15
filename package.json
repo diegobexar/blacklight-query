@@ -9,6 +9,7 @@
         "url": "https://themarkup.org/donate"
     },
     "scripts": {
+        "postinstall": "patch-package --error-on-fail",
         "main": "ts-node src/main.ts",
         "test": "jest",
         "clean": "rimraf outputs -i",
@@ -25,7 +26,8 @@
     },
     "homepage": "https://github.com/the-markup/blacklight-query#readme",
     "dependencies": {
-        "@themarkup/blacklight-collector": "^3.11.0",
+        "@themarkup/blacklight-collector": "3.11.0",
+        "patch-package": "^8.0.1",
         "ts-progress": "^0.1.9"
     },
     "devDependencies": {
@@ -45,7 +47,12 @@
         ],
         "preset": "ts-jest",
         "transform": {
-            "^.*\/__tests__\/.*ts$": ["ts-jest", {"diagnostics": false}]
+            "^.*/__tests__/.*ts$": [
+                "ts-jest",
+                {
+                    "diagnostics": false
+                }
+            ]
         },
         "globals": {
             "__DEV_SERVER__": "http://localhost:8125"
