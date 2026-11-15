@@ -3,3 +3,5 @@ node_modules/
 
 outputs/
 *.txt
+.env*
+.paradev/config.local.toml
