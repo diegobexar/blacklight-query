@@ -46,6 +46,13 @@ async function main() {
     );
   }
 
+  let emulateDevice;
+  try {
+    emulateDevice = deviceFor(options.device);
+  } catch (err) {
+    fail((err as Error).message);
+  }
+
   const source = resolveInputSource(options.input, Boolean(process.stdin.isTTY));
   if (!source) fail(USAGE);
   // Makes a pipe that never closes visible instead of a silent hang.
@@ -70,11 +77,10 @@ async function main() {
     fail(`Refusing to overwrite existing run folder(s): ${existing.join(", ")}\nPass --out to choose another folder.`);
   }
 
-  const emulateDevice = deviceFor(options.device);
   const versions = readToolVersions();
 
   // On Ctrl-C or kill, mark the current run as interrupted before exiting.
-  let current: { metadata: RunMetadata; runJson: string; url: string | null } | null = null;
+  let current: { metadata: RunMetadata; runJson: string; url: string | null; outDir: string | null } | null = null;
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       if (current) {
@@ -85,6 +91,8 @@ async function main() {
           endedAt: new Date(),
         });
         writeJson(current.runJson, current.metadata);
+        // Same as a failed scan: don't leave a partial folder that looks like a result.
+        if (current.outDir) fs.rmSync(current.outDir, { recursive: true, force: true });
         console.error(`\nInterrupted by ${signal}; recorded in ${current.runJson}`);
       }
       process.exit(signal === "SIGINT" ? 130 : 143);
@@ -117,7 +125,7 @@ async function main() {
     const runJson = join(runDir, "run.json");
     const failuresJson = join(runDir, "failures.json");
     writeJson(runJson, metadata);
-    current = { metadata, runJson, url: null };
+    current = { metadata, runJson, url: null, outDir: null };
     const failures: Failure[] = [];
     writeJson(failuresJson, failures);
     const usedFolders = new Set<string>();
@@ -133,9 +141,9 @@ async function main() {
         postLoadWaitMs: options.wait,
         location: options.location ?? undefined,
       };
-      current.url = url;
+      Object.assign(current, { url, outDir: config.outDir });
       const failure = await collectWithRetry(url, config, collect);
-      current.url = null;
+      Object.assign(current, { url: null, outDir: null });
       if (failure) {
         failures.push(failure);
         writeJson(failuresJson, failures);
@@ -143,6 +151,7 @@ async function main() {
       } else {
         metadata.results.scanned++;
       }
+      writeJson(runJson, metadata);
       progressBar.update();
     }
 

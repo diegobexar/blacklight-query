@@ -85,6 +85,15 @@ describe('canvas_font_fingerprinters', () => {
 
         expect(Object.keys(result.text_measure)).toEqual([fingerprinter]);
     });
+
+    test('handles a script that measures a very large number of distinct texts', () => {
+        const script = 'https://cdn.example.com/layout.js';
+        const calls = Array.from({ length: 200000 }, (_, i) => ({
+            data: { symbol: 'CanvasRenderingContext2D.measureText', arguments: [`word${i}`], operation: 'call' },
+            stack: [{ fileName: script }],
+        }));
+        expect(getCanvasFontFingerprinters(calls).text_measure).toEqual({});
+    });
 });
 
 describe('collect() against a local page', () => {

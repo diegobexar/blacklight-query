@@ -34,11 +34,13 @@ export function readBlocklistHeader(path: string) {
 export const PATCH_MARKER = "blacklight-query-patch:1";
 export const PATCHED_FILES = ["build/collector.js", "build/parser.js", "build/canvas-fingerprinting.js"];
 
-/** Patched collector files that don't carry PATCH_MARKER. Empty when fully patched. */
+/** Patched collector files that don't carry exactly PATCH_MARKER. Empty when fully patched. */
 export function unpatchedCollectorFiles(dir: string = collectorDir): string[] {
+  // Whole marker only, so ":1" doesn't match a file patched with ":12".
+  const marker = new RegExp(`^// ${PATCH_MARKER}(?!\\d)`, "m");
   return PATCHED_FILES.filter(file => {
     try {
-      return !fs.readFileSync(join(dir, file), "utf8").includes(PATCH_MARKER);
+      return !marker.test(fs.readFileSync(join(dir, file), "utf8"));
     } catch {
       return true;
     }
@@ -119,7 +121,7 @@ export interface RunMetadata {
   location: string | null;
   waitMs: number;
   input: { path: string; sha256: string; urls: number; invalid: InvalidLine[] };
-  /** Counts so far; final once endedAt is set. */
+  /** Counts so far, updated after each URL; final once endedAt is set. */
   results: { scanned: number; failed: number };
   /** The collector patch was verified at startup (the tool refuses to scan otherwise). */
   patched: true;

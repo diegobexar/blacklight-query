@@ -43,7 +43,7 @@ Examples:
 
 If a scan fails, the URL is retried once after 5 seconds. An unresolvable hostname (`net::ERR_NAME_NOT_RESOLVED`) isn't retried. URLs that still fail are listed in the run's `failures.json`, with the number of attempts.
 
-Ctrl-C (SIGINT) or SIGTERM stops the scan. The current run's `run.json` is marked `interrupted: true`, with the signal and the URL being scanned, and the tool exits with 130 or 143.
+Ctrl-C (SIGINT) or SIGTERM stops the scan. The current run's `run.json` is marked `interrupted: true`, with the signal and the URL being scanned. That URL's partial folder is removed, and the tool exits with 130 or 143.
 
 ## Inputs
 
@@ -100,7 +100,7 @@ outputs/20260102-0930-mobile/     # or the --out folder
     ...
 ```
 
-`run.json` and `failures.json` are written when a run starts and updated as it goes. A run that was killed outright has `endedAt: null` in `run.json`; one stopped by Ctrl-C or SIGTERM has `interrupted: true` (see above). `run.json` records:
+`run.json` and `failures.json` are written when a run starts and updated after each URL. A run that was killed outright has `endedAt: null` in `run.json`; one stopped by Ctrl-C or SIGTERM has `interrupted: true` (see above). `run.json` records:
 
 - the device name and settings, the user agent, and the run number
 - start and end times, whether the run was interrupted, the `--location` text and the `--wait` value
@@ -115,7 +115,7 @@ outputs/20260102-0930-mobile/     # or the --out folder
 
 ## Collector patches
 
-`patches/@themarkup+blacklight-collector+3.11.0.patch` is applied by [`patch-package`](https://github.com/ds300/patch-package) (a regular dependency, so it also runs with `npm install --omit=dev`) on every `npm install`. It changes the collector's built code in `node_modules`:
+`patches/@themarkup+blacklight-collector+3.11.0.patch` is applied by [`patch-package`](https://github.com/ds300/patch-package) (a regular dependency, so the patch is applied even with `npm install --omit=dev`; the launcher itself still needs the dev dependencies `ts-node` and `typescript`) on every `npm install`. It changes the collector's built code in `node_modules`:
 
 - **Google Analytics report no longer hides trackers.** The GA report deleted `url` from the shared event objects, so `stats.g.doubleclick.net` requests then disappeared from `third_party_trackers`. The patch copies the event instead.
 - **Canvas font check counts every font.** The font regex had the `/g` flag, so `.test()` kept `lastIndex` between calls and skipped every other font. That could keep a script under the 50-font threshold. The flag is removed.

@@ -53,8 +53,11 @@ test.each([
     try {
         const { child, output, exited } = start(['--out', out, '-']);
         children.push(child);
-        child.stdin!.end(`${url}\n`);
-        await waitFor(() => output.stdout.includes(`Scanning ${url}`) && fs.existsSync(runJson), 'the scan to start');
+        // The first URL fails at once (no retry for DNS errors), then the second hangs.
+        child.stdin!.end(`https://nonexistent.invalid/\n${url}\n`);
+        await waitFor(() => output.stdout.includes(`Scanning ${url}`), 'the second scan to start');
+        // Counts are saved after each URL, not only at the end.
+        expect(JSON.parse(fs.readFileSync(runJson, 'utf8')).results).toEqual({ scanned: 0, failed: 1 });
 
         child.kill(signal);
 
@@ -62,6 +65,8 @@ test.each([
         const run = JSON.parse(fs.readFileSync(runJson, 'utf8'));
         expect(run).toMatchObject({ interrupted: true, signal, urlInProgress: url, patched: true });
         expect(run.endedAt).not.toBeNull();
+        // The partial folder of the interrupted URL is removed.
+        expect(fs.readdirSync(path.join(out, 'r1')).sort()).toEqual(['failures.json', 'run.json']);
     } finally {
         server.closeAllConnections();
         server.close();

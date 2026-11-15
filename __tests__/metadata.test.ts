@@ -95,6 +95,8 @@ describe('collector patch check', () => {
         fs.mkdirSync(path.join(dir, 'build'));
         fs.writeFileSync(path.join(dir, 'build/collector.js'), `// ${PATCH_MARKER}\n`);
         fs.writeFileSync(path.join(dir, 'build/parser.js'), '// blacklight-query-patch:0\n');
+        // A longer marker number is a different patch, not a match.
+        fs.writeFileSync(path.join(dir, 'build/canvas-fingerprinting.js'), `// ${PATCH_MARKER}2\n`);
         expect(unpatchedCollectorFiles(dir)).toEqual(['build/parser.js', 'build/canvas-fingerprinting.js']);
     });
 
