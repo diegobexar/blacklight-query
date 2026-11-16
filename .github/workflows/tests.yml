@@ -10,14 +10,26 @@ jobs:
               uses: actions/checkout@v3
               with:
                     ref: ${{ github.head_ref }}
-        
+
             - name: Set up Node.js
               uses: actions/setup-node@v3
               with:
                     node-version: '20'
-            
+
             - name: Install dependencies
               run: npm install
 
+            - name: Typecheck
+              run: npm run typecheck
+
             - name: Run Jest tests
               run: npm run test
+
+            # The launcher must run from a production install. Empty stdin goes
+            # through startup and exits before scanning (same check as cli.test.ts).
+            - name: Run without dev dependencies
+              run: |
+                  npm ci --omit=dev
+                  out=$(echo | ./blacklight-query 2>&1) || true
+                  echo "$out"
+                  grep -qF "No valid URLs found in stdin." <<< "$out" || { echo "FAILED: launcher did not start" >&2; exit 1; }

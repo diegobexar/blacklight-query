@@ -13,6 +13,8 @@ A command-line tool to fetch [Blacklight](https://themarkup.org/series/blackligh
 - `npm install` (this also applies the collector patches; see [Collector patches](#collector-patches))
 - `./blacklight-query urls.txt` where `urls.txt` has newline-separated absolute URLs to scan
 
+`npm ci --omit=dev` is enough to run scans, for example on a server. The dev dependencies are only needed for [Testing](#testing).
+
 ## Usage
 
 ```text
@@ -115,7 +117,7 @@ outputs/20260102-0930-mobile/     # or the --out folder
 
 ## Collector patches
 
-`patches/@themarkup+blacklight-collector+3.11.0.patch` is applied by [`patch-package`](https://github.com/ds300/patch-package) (a regular dependency, so the patch is applied even with `npm install --omit=dev`; the launcher itself still needs the dev dependencies `ts-node` and `typescript`) on every `npm install`. It changes the collector's built code in `node_modules`:
+`patches/@themarkup+blacklight-collector+3.11.0.patch` is applied by [`patch-package`](https://github.com/ds300/patch-package) (a regular dependency, so the patch is applied even with `--omit=dev`) on every `npm install`. It changes the collector's built code in `node_modules`:
 
 - **Google Analytics report no longer hides trackers.** The GA report deleted `url` from the shared event objects, so `stats.g.doubleclick.net` requests then disappeared from `third_party_trackers`. The patch copies the event instead.
 - **Canvas font check counts every font.** The font regex had the `/g` flag, so `.test()` kept `lastIndex` between calls and skipped every other font. That could keep a script under the 50-font threshold. The flag is removed.
@@ -139,6 +141,6 @@ Be aware that the Collector is fairly resource-heavy, and may slow down your com
 
 ## Testing
 
-`npm test`
+`npm test` and `npm run typecheck`
 
 The collector-patch tests launch the bundled headless Chromium against a local test page. `__tests__/cli.test.ts` runs the launcher itself.
