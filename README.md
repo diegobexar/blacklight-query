@@ -43,7 +43,7 @@ Examples:
 - `--location text` is passed to the collector's `location` option, so it appears in each `inspection.json`, and is recorded in `run.json`. It's free text, e.g. where the scan was run from.
 - `--wait ms` waits this long after the collector has loaded and scrolled each page and before it collects results, for pages that load trackers late. The default of `0` matches a standard Blacklight scan.
 
-If a scan fails, the URL is retried once after 5 seconds. An unresolvable hostname (`net::ERR_NAME_NOT_RESOLVED`) isn't retried. URLs that still fail are listed in the run's `failures.json`, with the number of attempts.
+If a scan fails, the URL is retried once after 5 seconds. A DNS failure (`net::ERR_NAME_NOT_RESOLVED` or `net::ERR_NAME_RESOLUTION_FAILED`) is retried after 30 seconds instead, so a brief DNS outage doesn't mark live sites as failed. URLs that still fail are listed in the run's `failures.json`, with the error, the number of attempts and a `reason`: `dns` (DNS failure), `status` (the collector returned a failed status) or `error` (anything else).
 
 Ctrl-C (SIGINT) or SIGTERM stops the scan. The current run's `run.json` is marked `interrupted: true`, with the signal and the URL being scanned. That URL's partial folder is removed, and the tool exits with 130 or 143.
 
@@ -92,7 +92,7 @@ Read the [`blacklight-collector` README](https://github.com/the-markup/blackligh
 outputs/20260102-0930-mobile/     # or the --out folder
   r1/
     run.json                      # how this run was made (see below)
-    failures.json                 # URLs that failed: url, error, attempts
+    failures.json                 # URLs that failed: url, error, attempts, reason
     example.com/                  # one folder per scanned URL, named for its hostname
       inspection.json
       requests.har
