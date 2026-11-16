@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { RETRY_DELAY_MS, collectWithRetry, defaultOutDir, urlFolderName } from '../src/scan';
+import { DNS_RETRY_DELAY_MS, RETRY_DELAY_MS, collectWithRetry, defaultOutDir, urlFolderName } from '../src/scan';
 
 describe('defaultOutDir', () => {
     test('outputs/<YYYYMMDD-HHMM>-<device> in local time', () => {
@@ -42,12 +42,18 @@ describe('collectWithRetry', () => {
         expect(collect).toHaveBeenCalledTimes(1);
     });
 
-    test('waits RETRY_DELAY_MS, then retries once after a thrown error', async () => {
-        const collect = jest.fn()
-            .mockRejectedValueOnce(new Error('Navigation timeout of 35000 ms exceeded'))
-            .mockResolvedValueOnce({ status: 'success' });
-        const result = collectWithRetry('https://example.com', { outDir }, collect);
-        await jest.advanceTimersByTimeAsync(RETRY_DELAY_MS - 1);
+    const timeout = 'Navigation timeout of 35000 ms exceeded';
+    const notResolved = 'net::ERR_NAME_NOT_RESOLVED at https://example.invalid';
+    const resolverFailed = 'net::ERR_NAME_RESOLUTION_FAILED at https://example.invalid';
+
+    test.each([
+        [timeout, RETRY_DELAY_MS],
+        [notResolved, DNS_RETRY_DELAY_MS],
+        [resolverFailed, DNS_RETRY_DELAY_MS],
+    ])('after "%s", waits %d ms, then retries once', async (message, delayMs) => {
+        const collect = jest.fn().mockRejectedValueOnce(new Error(message)).mockResolvedValueOnce({ status: 'success' });
+        const result = collectWithRetry('https://example.invalid', { outDir }, collect);
+        await jest.advanceTimersByTimeAsync(delayMs - 1);
         expect(collect).toHaveBeenCalledTimes(1);
         await jest.advanceTimersByTimeAsync(1);
         expect(await result).toBeNull();
@@ -65,19 +71,21 @@ describe('collectWithRetry', () => {
             url: 'https://example.org',
             error: 'collector returned status "failed": Chrome crashed',
             attempts: 2,
+            reason: 'status',
         });
         expect(collect).toHaveBeenCalledTimes(2);
         expect(fs.existsSync(outDir)).toBe(false);
     });
 
-    test('does not retry an unresolvable hostname', async () => {
-        const collect = jest.fn().mockRejectedValue(new Error('net::ERR_NAME_NOT_RESOLVED at https://nonexistent.invalid'));
-        expect(await collectWithRetry('https://nonexistent.invalid', { outDir }, collect)).toEqual({
-            url: 'https://nonexistent.invalid',
-            error: 'net::ERR_NAME_NOT_RESOLVED at https://nonexistent.invalid',
-            attempts: 1,
-        });
-        expect(collect).toHaveBeenCalledTimes(1);
+    test.each([
+        [timeout, RETRY_DELAY_MS, 'error'],
+        [notResolved, DNS_RETRY_DELAY_MS, 'dns'],
+    ])('when "%s" repeats, waits %d ms and records reason %s', async (message, delayMs, reason) => {
+        const collect = jest.fn().mockRejectedValue(new Error(message));
+        const result = collectWithRetry('https://example.invalid', { outDir }, collect);
+        await jest.advanceTimersByTimeAsync(delayMs);
+        expect(await result).toEqual({ url: 'https://example.invalid', error: message, attempts: 2, reason });
+        expect(collect).toHaveBeenCalledTimes(2);
         expect(fs.existsSync(outDir)).toBe(false);
     });
 });

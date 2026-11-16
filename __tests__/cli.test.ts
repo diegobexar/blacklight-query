@@ -2,7 +2,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
-import { AddressInfo } from 'net';
+import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -15,6 +15,12 @@ function start(args: string[]) {
     child.stderr!.on('data', d => (output.stderr += d));
     const exited = new Promise<number | null>(resolve => child.on('exit', code => resolve(code)));
     return { child, output, exited };
+}
+
+/** Starts `server` on a free local port and returns its URL. */
+async function listenLocal(server: net.Server): Promise<string> {
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
 }
 
 async function waitFor(check: () => boolean, what: string, timeoutMs = 45000) {
@@ -46,18 +52,23 @@ test.each([
 ] as const)('%s marks run.json as interrupted and exits %d', async (signal, exitCode) => {
     // A page that never responds, so the scan is in progress when the signal arrives.
     const server = http.createServer(() => {});
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    const url = await listenLocal(server);
+    // Resets every connection: a fast, retryable scan failure.
+    const resetting = net.createServer(socket => socket.resetAndDestroy());
+    const failingUrl = await listenLocal(resetting);
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'blq-cli-'));
     const runJson = path.join(out, 'r1', 'run.json');
     try {
         const { child, output, exited } = start(['--out', out, '-']);
         children.push(child);
-        // The first URL fails at once (no retry for DNS errors), then the second hangs.
-        child.stdin!.end(`https://nonexistent.invalid/\n${url}\n`);
-        await waitFor(() => output.stdout.includes(`Scanning ${url}`), 'the second scan to start');
-        // Counts are saved after each URL, not only at the end.
+        // The first URL fails (and is retried once after 5 s), then the second hangs.
+        child.stdin!.end(`${failingUrl}\n${url}\n`);
+        await waitFor(() => output.stdout.includes(`Scanning ${url}`), 'the second scan to start', 75000);
+        // Counts and failures are saved after each URL, not only at the end.
         expect(JSON.parse(fs.readFileSync(runJson, 'utf8')).results).toEqual({ scanned: 0, failed: 1 });
+        expect(JSON.parse(fs.readFileSync(path.join(out, 'r1', 'failures.json'), 'utf8'))).toEqual([
+            { url: failingUrl, error: expect.stringContaining('net::ERR_'), attempts: 2, reason: 'error' },
+        ]);
 
         child.kill(signal);
 
@@ -70,6 +81,7 @@ test.each([
     } finally {
         server.closeAllConnections();
         server.close();
+        resetting.close();
         fs.rmSync(out, { recursive: true, force: true });
     }
-}, 60000);
+}, 100000);
