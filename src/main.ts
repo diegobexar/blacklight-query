@@ -4,14 +4,11 @@ import { join, resolve } from "path";
 import { collect } from "@themarkup/blacklight-collector";
 import { deviceFor, repoDir } from "./devices";
 import { parseUrlList, readInput } from "./input";
-import { PATCH_MARKER, readToolVersions, RunMetadata, unpatchedCollectorFiles } from "./metadata";
+import { checkCollectorPatch } from "./collector-patch";
+import { readToolVersions, RunMetadata } from "./metadata";
 import { parseCliArgs, resolveInputSource, USAGE, UsageError } from "./options";
 import { collectWithRetry, defaultOutDir, Failure, urlFolderName } from "./scan";
-import { reportFailures } from "./utils";
-
-function writeJson(path: string, data: unknown) {
-  fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-}
+import { reportFailures, writeJson } from "./utils";
 
 function fail(message: string): never {
   console.error(message);
@@ -32,13 +29,8 @@ async function main() {
   }
 
   // Scans from an unpatched collector would silently drop trackers and ignore --wait.
-  const unpatched = unpatchedCollectorFiles();
-  if (unpatched.length) {
-    fail(
-      `The Blacklight Collector patch is not applied (no "${PATCH_MARKER}" in ${unpatched.join(", ")}).\n` +
-        "Run `npm install` to apply patches/, then try again.",
-    );
-  }
+  const patchCheck = checkCollectorPatch();
+  if ("problem" in patchCheck) fail(`${patchCheck.problem}\nRun \`npm ci\` to reinstall and patch the collector, then try again.`);
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     console.warn(
       `PUPPETEER_EXECUTABLE_PATH is set: scans use ${process.env.PUPPETEER_EXECUTABLE_PATH}, not the bundled ` +
@@ -77,7 +69,7 @@ async function main() {
     fail(`Refusing to overwrite existing run folder(s): ${existing.join(", ")}\nPass --out to choose another folder.`);
   }
 
-  const versions = readToolVersions();
+  const versions = readToolVersions(patchCheck.patch);
 
   // On Ctrl-C or kill, mark the current run as interrupted before exiting.
   let current: { metadata: RunMetadata; runJson: string; url: string | null; outDir: string | null } | null = null;
