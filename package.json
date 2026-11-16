@@ -9,7 +9,7 @@
         "url": "https://themarkup.org/donate"
     },
     "scripts": {
-        "postinstall": "patch-package --error-on-fail",
+        "postinstall": "patch-package --error-on-fail && ts-node --transpile-only src/collector-patch.ts",
         "main": "ts-node src/main.ts",
         "test": "jest",
         "typecheck": "tsc --noEmit",

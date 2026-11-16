@@ -3,15 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { MOBILE, bundledChromeVersion, deviceFor, desktopDevice } from '../src/devices';
-import {
-    PATCHED_FILES,
-    PATCH_MARKER,
-    gitState,
-    parseBlocklistHeader,
-    readBlocklistHeader,
-    readToolVersions,
-    unpatchedCollectorFiles,
-} from '../src/metadata';
+import { PATCH_MARKER } from '../src/collector-patch';
+import { gitState, parseBlocklistHeader, readBlocklistHeader, readToolVersions } from '../src/metadata';
 
 const tmpDirs: string[] = [];
 const tmpDir = () => {
@@ -81,31 +74,6 @@ describe('blocklist headers', () => {
     });
 });
 
-describe('collector patch check', () => {
-    test('the installed collector carries the patch marker', () => {
-        expect(unpatchedCollectorFiles()).toEqual([]);
-    });
-
-    test('lists files without the marker', () => {
-        const dir = tmpDir();
-        fs.mkdirSync(path.join(dir, 'build'));
-        fs.writeFileSync(path.join(dir, 'build/collector.js'), `// ${PATCH_MARKER}\n`);
-        fs.writeFileSync(path.join(dir, 'build/parser.js'), '// blacklight-query-patch:0\n');
-        // A longer marker number is a different patch, not a match.
-        fs.writeFileSync(path.join(dir, 'build/canvas-fingerprinting.js'), `// ${PATCH_MARKER}2\n`);
-        expect(unpatchedCollectorFiles(dir)).toEqual(['build/parser.js', 'build/canvas-fingerprinting.js']);
-    });
-
-    test('the patch file adds the current marker to every checked file', () => {
-        const patchDir = path.join(__dirname, '..', 'patches');
-        const patch = fs.readFileSync(path.join(patchDir, fs.readdirSync(patchDir)[0]), 'utf8');
-        for (const file of PATCHED_FILES) {
-            const section = patch.split('diff --git ').find(s => s.startsWith(`a/node_modules/@themarkup/blacklight-collector/${file} `));
-            expect(section).toContain(`+// ${PATCH_MARKER}`);
-        }
-    });
-});
-
 describe('gitState', () => {
     const git = (dir: string, ...args: string[]) =>
         execFileSync('git', ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', ...args], { cwd: dir, stdio: 'ignore' });
@@ -135,16 +103,13 @@ describe('gitState', () => {
 });
 
 describe('readToolVersions', () => {
+    // The patch checkCollectorPatch verified (see patch-check.test.ts).
+    const patch = { file: '@themarkup+blacklight-collector+3.11.0.patch', sha256: 'abc123' };
+
     test('reports collector, puppeteer, Chromium, blocklist and git versions', () => {
-        const v = readToolVersions();
+        const v = readToolVersions(patch);
         expect(v.collector).toBe('3.11.0');
-        const patchFile = '@themarkup+blacklight-collector+3.11.0.patch';
-        const patchBytes = fs.readFileSync(path.join(__dirname, '..', 'patches', patchFile));
-        expect(v.collectorPatch).toEqual({
-            marker: PATCH_MARKER,
-            file: patchFile,
-            sha256: require('crypto').createHash('sha256').update(patchBytes).digest('hex'),
-        });
+        expect(v.collectorPatch).toEqual({ marker: PATCH_MARKER, ...patch });
         expect(v.puppeteer).toMatch(/^\d+\.\d+\.\d+/);
         expect(v.bundledChromium).toBe(bundledChromeVersion);
         expect(v.bundledChromium).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
@@ -159,9 +124,9 @@ describe('readToolVersions', () => {
         const saved = process.env.PUPPETEER_EXECUTABLE_PATH;
         try {
             delete process.env.PUPPETEER_EXECUTABLE_PATH;
-            expect(readToolVersions().executablePath).toBeNull();
+            expect(readToolVersions(patch).executablePath).toBeNull();
             process.env.PUPPETEER_EXECUTABLE_PATH = '/opt/chrome/chrome';
-            expect(readToolVersions().executablePath).toBe('/opt/chrome/chrome');
+            expect(readToolVersions(patch).executablePath).toBe('/opt/chrome/chrome');
         } finally {
             if (saved === undefined) delete process.env.PUPPETEER_EXECUTABLE_PATH;
             else process.env.PUPPETEER_EXECUTABLE_PATH = saved;

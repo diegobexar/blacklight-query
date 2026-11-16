@@ -108,9 +108,9 @@ outputs/20260102-0930-mobile/     # or the --out folder
 - start and end times, whether the run was interrupted, the `--location` text and the `--wait` value
 - the input file path (or `-` for stdin), its SHA-256, the URL count and any skipped lines
 - how many URLs were scanned and how many failed
-- `patched: true`: the collector patch was verified at startup
+- `patched: true`: the collector patch was verified at startup (see [Collector patches](#collector-patches))
 - under `versions`:
-  - the collector and puppeteer versions, and `collectorPatch`: the patch marker, file name and SHA-256
+  - the collector and puppeteer versions, and `collectorPatch`: the patch marker, file name and SHA-256 of the patch that was applied
   - `bundledChromium`, the Chromium build puppeteer downloads. The browser a scan actually used is in each `inspection.json` as `browser.version`. They differ if `PUPPETEER_EXECUTABLE_PATH` is set; the tool warns when it is, and records it as `executablePath`.
   - the EasyList and EasyPrivacy versions from their list headers
   - this repo's git commit, and `dirty: true` if there are local changes or untracked files that aren't gitignored
@@ -126,14 +126,14 @@ outputs/20260102-0930-mobile/     # or the --out folder
 - **The 10 s navigation timer is cleared.** It used to keep running after navigation finished, then logged a false "timeout" during a later scan and held the process open.
 - **New `postLoadWaitMs` option** (default `0`): an extra wait after each page's auto-scroll. Used by `--wait`.
 
-The patch is for collector 3.11.0, so `package.json` pins that exact version. `postinstall` runs `patch-package --error-on-fail`, so `npm install` stops if the patch no longer applies, for example after a collector upgrade, and `npm test` fails if a fix is missing. Each patched file also gets a `// blacklight-query-patch:N` marker line. At startup the tool checks the marker and refuses to scan if it's missing or out of date (for example, a pull that changed the patch without an `npm install`).
+The patch is for collector 3.11.0, so `package.json` pins that exact version. `postinstall` runs `patch-package --error-on-fail`, so `npm install` stops if the patch no longer applies, for example after a collector upgrade, and `npm test` fails if a fix is missing. After patching, `postinstall` records the patch file's name and SHA-256 in `node_modules/@themarkup/blacklight-collector/.blacklight-query-patch.json` (`src/collector-patch.ts`). Each patched file also carries a `// blacklight-query-patch:1` marker line. At startup the tool refuses to scan if a marker is missing, the record is missing, or the record doesn't match the patch file in `patches/` (for example, a pull that changed the patch). Then run `npm ci`: `npm install` can't apply a changed patch over the old one.
 
 To update the patch:
-1. Edit the files in `node_modules/@themarkup/blacklight-collector/build/`.
-2. Bump the marker in each file and `PATCH_MARKER` in `src/metadata.ts`.
-3. Run `npx patch-package @themarkup/blacklight-collector`.
+1. Edit the files in `node_modules/@themarkup/blacklight-collector/build/`. A newly patched file also needs the `// blacklight-query-patch:1` line (after `"use strict";`) and an entry in `PATCHED_FILES` in `src/collector-patch.ts`.
+2. Run `npx patch-package @themarkup/blacklight-collector`.
+3. Run `npm ci` to reinstall the collector from the new patch and record it. The marker number doesn't change.
 
-The tests in `__tests__/collector-patches.test.ts` check each fix, and `__tests__/metadata.test.ts` checks the marker.
+The tests in `__tests__/collector-patches.test.ts` check each fix, and `__tests__/patch-check.test.ts` checks the marker and the install-time record.
 
 ## Notes
 
